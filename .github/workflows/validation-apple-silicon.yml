@@ -1,0 +1,49 @@
+name: Validation experimentale Apple Silicon
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  validation:
+    name: Tests synthetiques macOS ARM64
+    runs-on: macos-26
+    timeout-minutes: 25
+    env:
+      PYTHONNOUSERSITE: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Recuperer les sources
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Informations sur la machine
+        run: |
+          uname -m
+          sw_vers
+          sysctl -n hw.memsize
+      - name: Preparer Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: arm64
+      - name: Installer dependances CI experimentales
+        run: |
+          python -m pip install --only-binary=:all: -r requirements.txt
+          python -m pip check
+      - name: Executer tests et produire rapport
+        id: validation
+        continue-on-error: true
+        run: python ci/run_validation.py
+      - name: Archiver rapport meme en cas d'echec
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-validation-apple-silicon
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Echec si validation non reussie
+        if: steps.validation.outcome != 'success'
+        run: exit 1
