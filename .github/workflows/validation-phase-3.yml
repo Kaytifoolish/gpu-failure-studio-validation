@@ -1,0 +1,60 @@
+
+name: Validation phase 3 Apple Silicon
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validation:
+    name: Tests TIFF JPEG et memoire
+    runs-on: macos-26
+    timeout-minutes: 25
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      - name: Recuperer les fichiers
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Afficher les informations du runner
+        run: |
+          uname -m
+          sw_vers
+          sysctl -n hw.memsize
+
+      - name: Installer Python ARM64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: arm64
+
+      - name: Installer les dependances de test
+        run: |
+          python -m pip install --only-binary=:all: -r requirements.txt
+          python -m pip check
+
+      - name: Executer les tests phase 3
+        id: phase3
+        continue-on-error: true
+        run: |
+          python ci/test_phase3.py
+
+      - name: Archiver le rapport
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-validation-phase-3
+          path: reports/phase3.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Signaler un echec
+        if: steps.phase3.outcome != 'success'
+        run: exit 1
