@@ -1,0 +1,36 @@
+
+name: Validation phase 5 - Dependances
+
+on:
+  push:
+    branches:
+      - validation-phase-5
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validation-phase-5:
+    name: Tests du verificateur de wheels
+    runs-on: macos-15
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v4
+
+      - name: Configurer Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Afficher la plateforme
+        run: |
+          python --version
+          uname -m
+
+      - name: Executer les tests de phase 5
+        run: python -m unittest discover -s ci -p 'test_phase5.py' -v
