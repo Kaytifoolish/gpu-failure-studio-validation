@@ -1,8 +1,10 @@
 
+import gc
 import hashlib
 import json
 import os
 import platform
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -11,76 +13,84 @@ import numpy as np
 import psutil
 from PIL import Image
 
-from engine import apply_effect
+# Le moteur se trouve a la racine du depot.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from engine import simulate
 
 
 def sha256(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
-def run():
-    results = []
+def main():
     process = psutil.Process(os.getpid())
-
-    # Tailles progressives, limitees pour le runner CI.
+    results = []
     sizes = [(800, 600), (2000, 1500), (4000, 3000)]
 
-    with tempfile.TemporaryDirectory() as folder:
-        folder = Path(folder)
+    with tempfile.TemporaryDirectory() as temp:
+        folder = Path(temp)
 
         for width, height in sizes:
-            pixels = width * height
-            if pixels > 12_000_000:
-                raise RuntimeError("Image trop grande pour ce test")
+            # Image synthetique RGB 16 bits.
+            image = np.zeros((height, width, 3), dtype=np.uint16)
+            image[:, :, 0] = 15000
+            image[:, :, 1] = 30000
+            image[:, :, 2] = 45000
 
-            # Image synthetique reproductible.
-            image_array = np.zeros(
-                (height, width, 3), dtype=np.uint8
-            )
-            image_array[:, :, 0] = 100
-            image_array[:, :, 1] = 150
-            image_array[:, :, 2] = 200
-
+            # Fichier source synthetique, sans photo personnelle.
             source = folder / f"source_{width}x{height}.png"
-            Image.fromarray(image_array).save(source)
+            preview = (image // 257).astype(np.uint8)
+            Image.fromarray(preview).save(source)
+            del preview
 
             before = sha256(source)
             start = time.monotonic()
 
-            # Test du moteur avec une image synthetique.
-            output = apply_effect(
-                image_array.copy(), "bit_flip", 0.3, 12345
+            output = simulate(
+                image, "Bit flips", 0.3, 12345
             )
 
-            elapsed = time.monotonic() - start
+            duration = time.monotonic() - start
             after = sha256(source)
 
             if before != after:
-                raise AssertionError("Source modifiee")
+                raise AssertionError("Le fichier source a ete modifie")
 
-            if output.shape != image_array.shape:
+            if output.shape != image.shape:
                 raise AssertionError("Dimensions incorrectes")
+
+            if output.dtype != np.uint16:
+                raise AssertionError("Format 16 bits incorrect")
 
             results.append({
                 "dimensions": f"{width}x{height}",
-                "megapixels": pixels / 1_000_000,
-                "seconds": round(elapsed, 3),
-                "rss_mb_after": round(
+                "megapixels": width * height / 1_000_000,
+                "duration_seconds": round(duration, 3),
+                "rss_mib_after": round(
                     process.memory_info().rss / 1024**2, 1
                 ),
                 "source_unchanged": True,
+                "output_uint16": True,
             })
 
-            del image_array, output
+            del image, output
+            gc.collect()
 
     report = {
-        "platform": platform.platform(),
         "machine": platform.machine(),
-        "results": results,
-        "note": (
-            "RSS mesure apres traitement, "
-            "pas le pic de memoire garanti."
-        ),
+        "macos": platform.mac_ver()[0],
+        "python": platform.python_version(),
+        "tests": results,
+        "limitations": [
+            "RSS mesure apres traitement, pas le pic garanti",
+            "Aucun fichier RAW reel",
+            "Aucun test d'interface graphique",
+            "Aucune sandbox macOS",
+        ],
     }
 
     Path("reports").mkdir(exist_ok=True)
@@ -93,4 +103,5 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    main()
+
