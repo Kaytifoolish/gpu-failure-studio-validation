@@ -1,0 +1,41 @@
+
+name: Validation phase 2 Apple Silicon
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validation:
+    name: Tests images synthetiques
+    runs-on: macos-26
+    timeout-minutes: 20
+
+    steps:
+      - name: Recuperer les fichiers
+        uses: actions/checkout@v4
+
+      - name: Installer Python ARM64
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: arm64
+
+      - name: Installer les dependances
+        run: |
+          python -m pip install --only-binary=:all: -r requirements.txt
+          python -m pip check
+
+      - name: Executer le test phase 2
+        run: python ci/test_phase2.py
+
+      - name: Archiver le rapport
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-validation-phase-2
+          path: reports/phase2.json
+          if-no-files-found: warn
+          retention-days: 14
