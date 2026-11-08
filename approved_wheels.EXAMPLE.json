@@ -1,0 +1,7 @@
+{
+  "numpy": {"filename": "NOM_EXACT_DU_WHEEL.whl", "sha256": "SHA256_VERIFIE_INDEPENDAMMENT"},
+  "pillow": {"filename": "NOM_EXACT_DU_WHEEL.whl", "sha256": "SHA256_VERIFIE_INDEPENDAMMENT"},
+  "rawpy": {"filename": "NOM_EXACT_DU_WHEEL.whl", "sha256": "SHA256_VERIFIE_INDEPENDAMMENT"},
+  "tifffile": {"filename": "NOM_EXACT_DU_WHEEL.whl", "sha256": "SHA256_VERIFIE_INDEPENDAMMENT"},
+  "psutil": {"filename": "NOM_EXACT_DU_WHEEL.whl", "sha256": "SHA256_VERIFIE_INDEPENDAMMENT"}
+}

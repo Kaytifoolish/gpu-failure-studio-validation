@@ -1,0 +1,6 @@
+# Exact version pins are reproducibility constraints, NOT verified security attestations.
+numpy==2.2.6
+Pillow==11.3.0
+rawpy==0.25.1
+tifffile==2025.6.11
+psutil==7.0.0
