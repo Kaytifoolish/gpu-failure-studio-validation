@@ -1,0 +1,36 @@
+
+name: Validation phase 7 - Chaine installation
+
+on:
+  push:
+    branches:
+      - validation-phase-7
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validation-phase-7:
+    name: Tests de phase 7
+    runs-on: macos-15
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v4
+
+      - name: Configurer Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Afficher la plateforme
+        run: |
+          python --version
+          uname -m
+
+      - name: Executer les tests de phase 7
+        run: python -m unittest discover -s ci -p 'test_phase7.py' -v
