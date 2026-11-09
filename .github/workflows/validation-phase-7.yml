@@ -110,12 +110,45 @@ jobs:
           print("OK : cinq bibliotheques importees")
           PY
 
+      
       - name: Verifier les fichiers non suivis
         shell: bash
         run: |
           set -euo pipefail
           git status --short
-          git ls-files --error-unmatch approved_wheels.json && {
+          if git ls-files --error-unmatch approved_wheels.json >/dev/null 2>&1; then
             echo "ERREUR : manifeste de test suivi par Git"
             exit 1
-          } || true
+          fi
+
+      - name: Refuser une empreinte SHA256 incorrecte
+        shell: bash
+        run: |
+          set -euo pipefail
+          .venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("approved_wheels.json")
+          approved = json.loads(path.read_text(encoding="utf-8"))
+          name = sorted(approved)[0]
+          original = approved[name]["sha256"]
+          approved[name]["sha256"] = (
+              "f" * 64 if original.lower() != "f" * 64 else "0" * 64
+          )
+          path.write_text(
+              json.dumps(approved, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          print("Empreinte volontairement incorrecte pour le test.")
+          PY
+
+          if /bin/zsh ./install.command >phase7-rejection.log 2>&1; then
+            cat phase7-rejection.log
+            echo "ERREUR : installation acceptee malgre une empreinte incorrecte"
+            exit 1
+          fi
+
+          cat phase7-rejection.log
+          grep -q "Empreinte non conforme" phase7-rejection.log
+          echo "OK : install.command refuse l'empreinte incorrecte"
