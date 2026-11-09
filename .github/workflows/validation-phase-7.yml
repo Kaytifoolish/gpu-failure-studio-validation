@@ -1,0 +1,154 @@
+
+
+name: Validation phase 7 - Chaine installation
+
+on:
+  push:
+    branches:
+      - validation-phase-7
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validation-phase-7:
+    name: Tests de phase 7
+    runs-on: macos-15
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v4
+
+      - name: Configurer Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Afficher la plateforme
+        run: |
+          python --version
+          uname -m
+          test "$(uname -m)" = "arm64"
+
+      - name: Executer les tests de phase 7
+        run: python -m unittest discover -s ci -p 'test_phase7.py' -v
+
+      - name: Preparer les wheels dans le runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          mkdir -p wheelhouse
+          .venv/bin/python -m pip download \
+            --only-binary=:all: \
+            --dest wheelhouse \
+            -r requirements.txt
+
+      - name: Creer un manifeste temporaire de test
+        shell: bash
+        run: |
+          set -euo pipefail
+          .venv/bin/python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          from pip._vendor.packaging.utils import (
+              canonicalize_name,
+              parse_wheel_filename,
+          )
+
+          pinned = {}
+          for line in Path("requirements.txt").read_text().splitlines():
+              line = line.strip()
+              if not line or line.startswith("#"):
+                  continue
+              name, version = line.split("==", 1)
+              pinned[canonicalize_name(name)] = version
+
+          approved = {}
+          wheels = sorted(Path("wheelhouse").glob("*.whl"))
+          assert len(wheels) == len(pinned), "Nombre de wheels inattendu"
+
+          for wheel in wheels:
+              name, version, _, _ = parse_wheel_filename(wheel.name)
+              name = canonicalize_name(name)
+              assert name in pinned, f"Dependance inattendue : {name}"
+              assert str(version) == pinned[name], "Version inattendue"
+              assert name not in approved, "Wheel en double"
+
+              approved[name] = {
+                  "filename": wheel.name,
+                  "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+              }
+
+          assert set(approved) == set(pinned)
+          Path("approved_wheels.json").write_text(
+              json.dumps(approved, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          print("Manifeste de test genere, NON approuve independamment.")
+          PY
+
+      - name: Tester install.command et requirements.lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          /bin/zsh ./install.command
+          test -s requirements.lock
+          test "$(grep -c -- '--hash=sha256:' requirements.lock)" -eq 5
+          .venv/bin/python -m pip check
+          .venv/bin/python - <<'PY'
+          import numpy
+          import PIL
+          import rawpy
+          import tifffile
+          import psutil
+          print("OK : cinq bibliotheques importees")
+          PY
+
+      
+      - name: Verifier les fichiers non suivis
+        shell: bash
+        run: |
+          set -euo pipefail
+          git status --short
+          if git ls-files --error-unmatch approved_wheels.json >/dev/null 2>&1; then
+            echo "ERREUR : manifeste de test suivi par Git"
+            exit 1
+          fi
+
+      - name: Refuser une empreinte SHA256 incorrecte
+        shell: bash
+        run: |
+          set -euo pipefail
+          .venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("approved_wheels.json")
+          approved = json.loads(path.read_text(encoding="utf-8"))
+          name = sorted(approved)[0]
+          original = approved[name]["sha256"]
+          approved[name]["sha256"] = (
+              "f" * 64 if original.lower() != "f" * 64 else "0" * 64
+          )
+          path.write_text(
+              json.dumps(approved, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          print("Empreinte volontairement incorrecte pour le test.")
+          PY
+
+          if /bin/zsh ./install.command >phase7-rejection.log 2>&1; then
+            cat phase7-rejection.log
+            echo "ERREUR : installation acceptee malgre une empreinte incorrecte"
+            exit 1
+          fi
+
+          cat phase7-rejection.log
+          grep -q "Empreinte non conforme" phase7-rejection.log
+          echo "OK : install.command refuse l'empreinte incorrecte"
