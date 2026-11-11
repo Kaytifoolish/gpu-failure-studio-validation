@@ -50,3 +50,37 @@ def validate_export(path, mode, max_pixels=36_000_000):
             im.verify()
     else:
         raise ValueError('Format inconnu')
+
+
+def validate_print_metadata(path, mode, expected_dpi, expected_icc=None):
+    """Verify stored DPI and ICC against the actual worker result."""
+    from color_management import validate_icc
+    from print_export import validate_dpi
+    validate_dpi(expected_dpi)
+    if mode == 'tiff':
+        import tifffile
+        with tifffile.TiffFile(path) as tf:
+            page = tf.pages[0]
+            x = page.tags['XResolution'].value
+            y = page.tags['YResolution'].value
+            unit = page.tags['ResolutionUnit'].value
+            if int(unit) != 2 or abs(x[0] / x[1] - expected_dpi) > 0.5 or abs(y[0] / y[1] - expected_dpi) > 0.5:
+                raise ValueError('Résolution TIFF incorrecte')
+            tag = page.tags.get(34675)
+            icc = bytes(tag.value) if tag is not None else None
+    elif mode == 'jpeg':
+        from PIL import Image
+        with Image.open(path) as im:
+            dpi = im.info.get('dpi')
+            if not dpi or any(abs(x - expected_dpi) > 1 for x in dpi):
+                raise ValueError('Résolution JPEG incorrecte')
+            icc = im.info.get('icc_profile')
+    else:
+        raise ValueError('Format inconnu')
+    if icc is not None:
+        validate_icc(icc)
+    if expected_icc == 'embedded' and icc is None:
+        raise ValueError('Profil ICC perdu pendant export')
+    if expected_icc == 'unknown' and icc is not None:
+        raise ValueError('Profil ICC inattendu')
+    return bool(icc)

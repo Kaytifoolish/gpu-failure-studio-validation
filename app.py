@@ -1,20 +1,21 @@
 """Small macOS Tk app. Preview/export run only in monitored subprocesses."""
-import os,sys,time,signal,queue,threading,tempfile,subprocess
+import os,sys,time,signal,queue,threading,tempfile,subprocess,json
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk,filedialog,messagebox
 from PIL import Image,ImageTk
 from engine import EFFECTS
-from safety import check_source, publish_no_overwrite, validate_export
+from safety import check_source, publish_no_overwrite, validate_export, validate_print_metadata
+from print_export import validate_dpi, print_report
 
 MAX_WORKER_RSS=1_800*1024*1024  # soft threshold, NOT an OS-enforced cap
 WORKER=Path(__file__).with_name('worker.py')
 
-def run_worker(source,target,mode,effect,strength,seed,timeout):
+def run_worker(source,target,mode,effect,strength,seed,timeout,dpi=300):
     """Best-effort resource watchdog, NOT a sandbox or hard memory limit."""
     import psutil
     cmd=[sys.executable,str(WORKER),'--source',str(source),'--target',str(target),'--mode',mode,
-         '--effect',effect,'--strength',str(strength),'--seed',str(seed)]
+         '--effect',effect,'--strength',str(strength),'--seed',str(seed),'--dpi',str(dpi)]
     env=os.environ.copy()
     for key in ('PYTHONPATH','PYTHONSTARTUP','PYTHONINSPECT'):
         env.pop(key,None)
@@ -37,6 +38,7 @@ def run_worker(source,target,mode,effect,strength,seed,timeout):
         out,err=p.communicate(timeout=5)
         if p.returncode:
             raise RuntimeError(err.decode('utf-8','replace')[-900:] or f'Worker code {p.returncode}')
+        return json.loads(out.decode('utf-8'))
     except BaseException:
         try:os.killpg(p.pid,signal.SIGKILL)
         except ProcessLookupError:pass
@@ -61,6 +63,8 @@ class App:
         ttk.Scale(settings,from_=0,to=1,variable=self.strength,length=150).grid(row=0,column=3,padx=8)
         ttk.Label(settings,text='Graine').grid(row=0,column=4)
         self.seed=tk.StringVar(value='2026');ttk.Entry(settings,textvariable=self.seed,width=12).grid(row=0,column=5,padx=8)
+        ttk.Label(settings,text='Impression (ppp)').grid(row=1,column=0,sticky='w',pady=(8,0))
+        self.dpi=tk.StringVar(value='300');ttk.Entry(settings,textvariable=self.dpi,width=10).grid(row=1,column=1,sticky='w',padx=8,pady=(8,0))
         ttk.Button(settings,text='Actualiser aperçu',command=self.refresh).grid(row=0,column=6)
         self.status=tk.StringVar(value='Prêt. Utiliser une copie non confidentielle pour les premiers tests.')
         ttk.Label(root,textvariable=self.status,padding=(14,8),wraplength=900).pack(fill='x')
@@ -91,11 +95,19 @@ class App:
                 kind,ok,val=self.q.get_nowait();self.busy=False
                 if not ok:self.status.set('Erreur : '+val);messagebox.showerror('Opération interrompue',val)
                 elif kind=='preview':
-                    with Image.open(val) as im:
-                        im.load();self.preview=ImageTk.PhotoImage(im.copy())
-                    self.image.configure(image=self.preview);self.status.set('Aperçu simulé prêt. L’export recalcule à pleine résolution.')
-                    Path(val).unlink(missing_ok=True)
-                else:self.status.set('Export terminé : '+val);messagebox.showinfo('Export terminé',val)
+                    try:
+                        with Image.open(val) as im:
+                            im.load();self.preview=ImageTk.PhotoImage(im.copy())
+                        self.image.configure(image=self.preview);self.status.set('Aperçu simulé prêt. L’export recalcule à pleine résolution.')
+                    finally:
+                        Path(val).unlink(missing_ok=True)
+                else:
+                    path, report, icc_status = val
+                    details = ('Profil ICC intégré.' if icc_status == 'embedded' else 'ATTENTION : profil ICC inconnu, fidélité colorimétrique non garantie.')
+                    if not report['a3_enough_pixels'] or not report['a3_ratio_matches']:
+                        details += '\nAttention : dimensions insuffisantes ou ratio différent pour un A3 entier sans recadrage.'
+                    self.status.set('Export terminé : '+path)
+                    messagebox.showinfo('Export terminé',path+'\n'+details)
         except queue.Empty:pass
         if not self.closed:self.root.after(100,self.poll)
     def open(self):
@@ -129,16 +141,20 @@ class App:
         dest=Path(chosen).expanduser().absolute()
         if dest.suffix.lower()!=ext:messagebox.showerror('Export','Extension incorrecte');return
         if dest.exists() or dest.is_symlink():messagebox.showerror('Export','Le fichier existe déjà. Aucun écrasement autorisé.');return
+        try:dpi=validate_dpi(int(self.dpi.get()))
+        except (ValueError,TypeError) as e:messagebox.showerror('Résolution',str(e));return
         source=self.source
         def task():
             fd,name=tempfile.mkstemp(prefix='.gpu_studio_',suffix=ext,dir=dest.parent);os.close(fd)
             tmp=Path(name)
             try:
-                run_worker(source,tmp,mode,effect,strength,seed,180)
+                result=run_worker(source,tmp,mode,effect,strength,seed,180,dpi)
                 if not tmp.is_file() or tmp.stat().st_size==0:raise ValueError('Export vide')
                 validate_export(tmp,mode)
+                validate_print_metadata(tmp,mode,dpi,result['icc'])
+                # Print metadata only: no pixel enlargement or color-profile conversion.
                 publish_no_overwrite(tmp,dest)
-                return str(dest)
+                return str(dest),result['print'],result['icc']
             finally:tmp.unlink(missing_ok=True)
         self.launch('export',task)
 if __name__=='__main__':
